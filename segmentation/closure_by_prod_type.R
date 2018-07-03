@@ -11,23 +11,25 @@ for (req_pack_ele in req_packages) {
     library(req_pack_ele, character.only = T)
   }
 }
-is_export_xlsx = F
+is_export_xlsx = T
 
 
 # Period 
 # Serioulsly ?
 # https://stackoverflow.com/questions/29956396/looping-through-date-in-r-loses-format
 # Period from 2016-01-31 to 2018-02-31
-period = as.list(c(as.Date('2018-5-31'), as.Date('2018-6-30')))
-# period = as.list(c(as.Date('2018-1-31'), as.Date('2018-2-28'), as.Date('2018-3-31')))
+# period = as.list(c(as.Date('2018-5-31'), as.Date('2018-6-30')))
+period = as.list(seq(as.Date("2016-02-01"),length=26,by="month")-1)
 period_pair = cbind(period[-length(period)], period[-1])
 period_str = c()
 
 # Output (next month closure rate either by retail / non-retail and breakdown non-retail into different product types)
+n_per_closure_by_csegment = matrix(nrow = nrow(period_pair), ncol=2)  
+
 # produt types are CRE (13.9), Commercial Tax Exempt (9.7), Commercial Floor Plan (3.2), 
 # Commercial Domestic (34.48), Commercial International (1.18); Values in parenthesis are balance in Billion as of June, 2018 
-# n_per_closure has nrtl, rtl, prod1, prod2, prod 3, prod4, prod5 for each period
-n_per_closure = matrix(nrow = nrow(period_pair), ncol=8)  
+# n_per_closure_by_psegment NonRtl, prod1, prod2, prod 3, prod4, prod5 for each period
+n_per_closure_by_psegment = matrix(nrow = nrow(period_pair), ncol=6)  
 
 # sas_data fileds of interests
 sas_fields = c('PERD_END_DT', 'Proc_Tp_RevNon_Ind', 'high_account_ID', 'QRM_Forecast_SubLOB', 'Product_Type',
@@ -88,20 +90,18 @@ for (i in 1:nrow(period_pair)) {
   sas_data[cnb_filter, seg_fl] = list('Seg 6', 'Seg Rt1')
   sas_data[cre_filter, seg_fl] = list('Seg 7', 'Seg Ntr1')
   
-  # Now, filter for product type
+  # Now, filter for product type (for non-retail)
   cre_prod_filter = grepl('CRE', sas_data$Product_Type, ignore.case = T) & !abl_filter & !floor_filter
   domestic_prod_filter = grepl('Domestic', sas_data$Product_Type, ignore.case = T)
   tax_prod_filter = grepl('Tax', sas_data$Product_Type, ignore.case = T)
   floor_prod_filter = grepl('Floor', sas_data$Product_Type, ignore.case = T)
   int_prod_filter = grepl('International', sas_data$Product_Type, ignore.case = T)
-  abl_prod_filter = grepl('ABL', sas_data$Product_Type, ignore.case = T)  # This would be our retail
   
   sas_data[cre_prod_filter, 'PSegment'] = 'Prod1 CRE'
   sas_data[domestic_prod_filter, 'PSegment'] = 'Prod2 Domestic'
   sas_data[tax_prod_filter, 'PSegment'] = 'Prod3 Tax Exempt'
   sas_data[floor_prod_filter, 'PSegment'] = 'Prod4 Floor Plan'
   sas_data[int_prod_filter, 'PSegment'] = 'Prod5 International'
-  sas_data[abl_prod_filter, 'PSegment'] = 'Prod6 ABL'
   
   
   # Start period filter
@@ -142,27 +142,37 @@ for (i in 1:nrow(period_pair)) {
   closed_acc_face_amt_by_psegment = with(closed_acc_data, tapply(s_face_amt, PSegment, sum))
   all_accr_face_amt_by_psegment = with(s_per_data, tapply(s_face_amt, PSegment, sum))
   
+  # check for missing
+  uniq_pseg = names(all_accr_face_amt_by_psegment)
+  for (uniq_pseg_ele in uniq_pseg) {
+    if (!(uniq_pseg_ele %in% names(closed_acc_face_amt_by_psegment))) {
+      closed_acc_face_amt_by_psegment[uniq_pseg_ele] = 0
+    }
+  }
+  
   # SMM to CPR (This is based on commitment (I'm using face_amt))
-  n_per_closure_by_csegment = (1 - (1 - closed_acc_face_amt_by_csegment / all_accr_face_amt_by_csegment) ^ 12) * 100
-  n_per_closure[i, 1:8] = n_per_closure_by_csegment
+  n_per_closure_by_csegment[i, 1:2] = (1 - (1 - closed_acc_face_amt_by_csegment / all_accr_face_amt_by_csegment) ^ 12) * 100
+  n_per_closure_by_psegment[i, 1] = n_per_closure_by_csegment[i, 1]
+  n_per_closure_by_psegment[i, 2:6] = (1 - (1 - closed_acc_face_amt_by_psegment / all_accr_face_amt_by_psegment) ^ 12) * 100
   
 }
 
 # Make it n x 1 and add segmentation
-n_per_closure_df = data.frame(cpr=as.vector(t(n_per_closure)))
+n_per_closure_df_by_prod = data.frame(cpr=as.vector(t(n_per_closure_by_psegment)))
 
-segmentation_name = c('nrtl', 'rtl', 'cre', 'domestic', 'tax exempt', 'floor plan', 'international', 'abl')
+segmentation_name_by_prod = c('nrtl','cre', 'domestic', 'tax exempt', 'floor plan', 'international')
 
-n_per_closure_df['period'] = rep(unlist(period_str), each=length(segmentation_name))
-n_per_closure_df['segmentation'] = rep(segmentation_name, length(period_str))
+n_per_closure_df_by_prod['period'] = rep(unlist(period_str), each=length(segmentation_name_by_prod))
+n_per_closure_df_by_prod['segmentation'] = rep(segmentation_name_by_prod, length(period_str))
 
-ggplot(n_per_closure_df, aes(x=period, y=cpr, group=segmentation)) + 
+ggplot(n_per_closure_df_by_prod, aes(x=period, y=cpr, group=segmentation)) + 
   geom_bar(aes(fill=segmentation), stat='identity', position='dodge') + 
   theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
   scale_x_discrete(limits=unlist(period_str)) +
   theme(legend.position="bottom")
 
+
 # Write to excel
 if (is_export_xlsx == T) {
-  write.xlsx(n_per_closure_df, "closure_by_seg.xlsx", sheetName="raw_data")
+  write.xlsx(n_per_closure_df_by_prod, "closure_by_prod_type.xlsx", sheetName="raw_data_by_prod")
 }  
