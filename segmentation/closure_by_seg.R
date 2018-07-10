@@ -135,10 +135,15 @@ for (i in 1:nrow(period_pair)) {
   uniq_useg = names(all_accr_face_amt_by_usegment)
   
   for (uniq_useg_ele in uniq_useg) {
+    if (!(uniq_useg_ele %in% names(closed_acc_face_amt_by_csegment))) {
+      closed_acc_face_amt_by_csegment[uniq_useg_ele] = 0
+    }
+    
     if (!(uniq_useg_ele %in% names(closed_acc_face_amt_by_usegment))) {
       closed_acc_face_amt_by_usegment[uniq_useg_ele] = 0
     }
   }
+  closed_acc_face_amt_by_usegment = closed_acc_face_amt_by_usegment[order(names(closed_acc_face_amt_by_usegment))]
   
   # SMM to CPR (This is based on commitment (I'm using face_amt))
   n_per_closure_by_csegment = (1 - (1 - closed_acc_face_amt_by_csegment / all_accr_face_amt_by_csegment) ^ 12) * 100
