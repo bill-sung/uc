@@ -11,15 +11,13 @@ for (req_pack_ele in req_packages) {
     library(req_pack_ele, character.only = T)
   }
 }
-is_export_xlsx = F
-
 
 # Period 
 # Serioulsly ?
 # https://stackoverflow.com/questions/29956396/looping-through-date-in-r-loses-format
-# Period from 2016-01-31 to 2018-02-31
-#period = as.list(c(as.Date('2018-5-31'), as.Date('2018-6-30')))
-period = as.list(seq(as.Date("2016-02-01"),length=26,by="month")-1)
+# Period from 2016-01-31 to 2018-02-28
+period = as.list(c(as.Date('2016-11-30'), as.Date('2016-12-31'), as.Date('2017-1-31'), as.Date('2017-2-28'), as.Date('2017-3-31')))
+#period = as.list(seq(as.Date("2016-02-01"),length=26,by="month")-1)
 period_pair = cbind(period[-length(period)], period[-1])
 period_str = c()
 
@@ -29,11 +27,16 @@ n_per_closure_by_csegment = matrix(nrow = nrow(period_pair), ncol=2)
 # produt types are CRE (13.9), Commercial Tax Exempt (9.7), Commercial Floor Plan (3.2), 
 # Commercial Domestic (34.48), Commercial International (1.18); Values in parenthesis are balance in Billion as of June, 2018 
 # n_per_closure_by_psegment NonRtl, prod1, prod2, prod 3, prod4, prod5 for each period
-n_per_closure_by_psegment = matrix(nrow = nrow(period_pair), ncol=6)  
+# Last group is retail which is not segmented by prod_type
+n_per_closure_by_psegment = matrix(nrow = nrow(period_pair), ncol=7)  
 
 # Focusing on domestic
 # It is further categorized by LOB {All, Seg2 (CIB), Seg3 (CML), Seg4 (PWM), Seg5 (ABL), Seg7 (CRE)}
 n_per_closure_domestic = matrix(nrow = nrow(period_pair), ncol=6)  
+
+# Focusing on CRE
+# It is further categorized by {All, CRE Investor Occupied, CRE Owner Occupied, CRE Construction}
+n_per_closure_cre = matrix(nrow = nrow(period_pair), ncol=4)  
 
 # sas_data fileds of interests
 sas_fields = c('PERD_END_DT', 'Proc_Tp_RevNon_Ind', 'high_account_ID', 'QRM_Forecast_SubLOB', 'Product_Type',
@@ -47,7 +50,7 @@ for (i in 1:nrow(period_pair)) {
     
     if (j == 2 || is.na(temp_data)) {
       period_str_ele = lapply(format(period_pair[[i, j]], format="%b%Y"), tolower)
-      # print(sprintf('Running sas data for %s', period_str_ele))
+      print(sprintf('Running sas data for %s', period_str_ele))
       
       temp_data = read_sas(paste0("data/comlmodeling_", period_str_ele, ".sas7bdat"))
     } 
@@ -95,28 +98,40 @@ for (i in 1:nrow(period_pair)) {
   sas_data[cre_filter, seg_fl] = list('Seg 7', 'Seg Ntr1')
   
   # Now, filter for product type (for non-retail)
-  cre_prod_filter = grepl('CRE', sas_data$Product_Type, ignore.case = T) & !abl_filter & !floor_filter
-  domestic_prod_filter = grepl('Domestic', sas_data$Product_Type, ignore.case = T) | abl_filter  # ABL and Domestic planning
-  tax_prod_filter = grepl('Tax', sas_data$Product_Type, ignore.case = T)
-  floor_prod_filter = grepl('Floor', sas_data$Product_Type, ignore.case = T)
-  int_prod_filter = grepl('International', sas_data$Product_Type, ignore.case = T)
+  cre_prod_filter = grepl('CRE', sas_data$Product_Type, ignore.case = T) & !abl_filter & !floor_filter & !cnb_filter
+  domestic_prod_filter = (grepl('Domestic', sas_data$Product_Type, ignore.case = T) | abl_filter) & !cnb_filter  # ABL and Domestic planning
+  tax_prod_filter = grepl('Tax', sas_data$Product_Type, ignore.case = T) & !cnb_filter
+  floor_prod_filter = grepl('Floor', sas_data$Product_Type, ignore.case = T) & !cnb_filter
+  int_prod_filter = grepl('International', sas_data$Product_Type, ignore.case = T) & !cnb_filter
   
   sas_data[cre_prod_filter, 'PSegment'] = 'Prod1 CRE'
   sas_data[domestic_prod_filter, 'PSegment'] = 'Prod2 Domestic'
   sas_data[tax_prod_filter, 'PSegment'] = 'Prod3 Tax Exempt'
   sas_data[floor_prod_filter, 'PSegment'] = 'Prod4 Floor Plan'
   sas_data[int_prod_filter, 'PSegment'] = 'Prod5 International'
+  sas_data[cnb_filter, 'PSegment'] = 'Rtl'  # Retail (not for prod_type segmentation)
+  
+  # Closeup for CRE
+  cre_inv_prod_filter = grepl('CRE Investor', sas_data$Product_Type, ignore.case = T) & !abl_filter & !floor_filter
+  cre_oo_prod_filter = grepl('CRE Owner', sas_data$Product_Type, ignore.case = T) & !abl_filter & !floor_filter
+  cre_const_prod_filter = grepl('CRE Construction', sas_data$Product_Type, ignore.case = T) & !abl_filter & !floor_filter
+  
+  sas_data[cre_inv_prod_filter, 'CRE'] = 'CRE Investor Owned'
+  sas_data[cre_oo_prod_filter, 'CRE'] = 'CRE Owner Occupied'
+  sas_data[cre_const_prod_filter, 'CRE'] = 'CRE Construction'
+  sas_data[!cre_inv_prod_filter & !cre_oo_prod_filter & !cre_const_prod_filter, 'CRE'] = 'Non-CRE'
   
   # Start period filter
   s_per_filter = with(sas_data, PERD_END_DT == period_pair[[i, 1]] & NonAccrualFlag == 'N' & face_amt > 0)
   s_per_data = sas_data[s_per_filter, ]
   s_per_data = aggregate(s_per_data[, c('face_amt', 'Curr_Bal')], 
-                         by=list(new_id = paste0(s_per_data$high_account_ID, s_per_data$USegment), 
+                         by=list(new_id = paste0(s_per_data$high_account_ID, s_per_data$USegment, s_per_data$PSegment), 
                                  USegment = s_per_data$USegment,
                                  CSegment = s_per_data$CSegment,
-                                 PSegment = s_per_data$PSegment), 
+                                 PSegment = s_per_data$PSegment,
+                                 CRE = s_per_data$CRE), 
                          FUN=sum)
-  colnames(s_per_data) <- c("new_id", "USegment", "CSegment", "PSegment", "s_face_amt", "s_curr_bal")
+  colnames(s_per_data) <- c("new_id", "USegment", "CSegment", "PSegment", "CRE", "s_face_amt", "s_curr_bal")
   
   # Print to check
   print(sprintf('[%s] Floor plan: curr_bal: %s, count w/ new_id: %d', period_pair[[i, 1]],  
@@ -131,12 +146,13 @@ for (i in 1:nrow(period_pair)) {
   n_per_filter = with(sas_data, PERD_END_DT == period_pair[[i, 2]])
   n_per_data = sas_data[n_per_filter, ]
   n_per_data = aggregate(n_per_data[, c('face_amt', 'Curr_Bal')], 
-                         by=list(new_id = paste0(n_per_data$high_account_ID, n_per_data$USegment), 
+                         by=list(new_id = paste0(n_per_data$high_account_ID, n_per_data$USegment, n_per_data$PSegment), 
                                  USegment = n_per_data$USegment,
                                  CSegment = n_per_data$CSegment,
-                                 PSegment = n_per_data$PSegment),  
+                                 PSegment = n_per_data$PSegment,
+                                 CRE = n_per_data$CRE),  
                          FUN=sum)
-  colnames(n_per_data) <- c("new_id", "USegment", "CSegment", "PSegment", "n_face_amt", "n_curr_bal")
+  colnames(n_per_data) <- c("new_id", "USegment", "CSegment", "PSegment", "CRE", "n_face_amt", "n_curr_bal")
   
   # Only filter the new_id from s_per_data
   n_per_data = n_per_data[n_per_data$new_id %in% s_per_data$new_id, ]  
@@ -150,23 +166,31 @@ for (i in 1:nrow(period_pair)) {
   # Print
   print(sprintf('Floor closed loan #: %d', length(closed_acc_data[closed_acc_data$PSegment %in% 'Prod4 Floor Plan', 's_curr_bal'])))
   print(sprintf('Domestic closed loan #: %d', length(closed_acc_data[closed_acc_data$PSegment %in% 'Prod2 Domestic', 's_curr_bal'])))
+  print(sprintf('CRE closed loan #: %d', length(closed_acc_data[closed_acc_data$PSegment %in% 'Prod1 CRE', 's_curr_bal'])))
+  print(sprintf('CRE Investor closed loan #: %d', length(closed_acc_data[closed_acc_data$CRE %in% 'CRE Investor Owned', 's_curr_bal'])))
+  print(sprintf('CRE Owner loan #: %d', length(closed_acc_data[closed_acc_data$CRE %in% 'CRE Owner Occupied', 's_curr_bal'])))
+  print(sprintf('CRE Const loan #: %d', length(closed_acc_data[closed_acc_data$CRE %in% 'CRE Construction', 's_curr_bal'])))
   
   # closed_acc_by_CSegment
   closed_acc_face_amt_by_csegment = with(closed_acc_data, tapply(s_face_amt, CSegment, sum))
-  all_accr_face_amt_by_csegment = with(s_per_data, tapply(s_face_amt, CSegment, sum))
+  all_acc_face_amt_by_csegment = with(s_per_data, tapply(s_face_amt, CSegment, sum))
   
   # closed_acc_by_PSegment
   closed_acc_face_amt_by_psegment = with(closed_acc_data, tapply(s_face_amt, PSegment, sum))
-  all_accr_face_amt_by_psegment = with(s_per_data, tapply(s_face_amt, PSegment, sum))
+  all_acc_face_amt_by_psegment = with(s_per_data, tapply(s_face_amt, PSegment, sum))
   
-  # cloased_acc_by_USegment_PSegment (I'm only interested in Domestic of {seg 2 (CIB), Seg 3 (CML), Seg 7 (CRE) })
+  # cloased_acc_by_domestic (I'm only interested in Domestic of {seg 2 (CIB), Seg 3 (CML), Seg 7 (CRE) })
   closed_acc_face_amt_by_domestic = with(closed_acc_data, tapply(s_face_amt, list(USegment, PSegment), sum))
   closed_acc_face_amt_by_domestic = closed_acc_face_amt_by_domestic[, 'Prod2 Domestic']
-  all_accr_face_amt_by_domestic = with(s_per_data, tapply(s_face_amt, list(USegment, PSegment), sum))
-  all_accr_face_amt_by_domestic = all_accr_face_amt_by_domestic[, 'Prod2 Domestic']
+  all_acc_face_amt_by_domestic = with(s_per_data, tapply(s_face_amt, list(USegment, PSegment), sum))
+  all_acc_face_amt_by_domestic = all_acc_face_amt_by_domestic[, 'Prod2 Domestic']
+  
+  # cloased_acc_by_cre 
+  closed_acc_face_amt_by_cre = with(closed_acc_data, tapply(s_face_amt, CRE, sum))
+  all_acc_face_amt_by_cre = with(s_per_data, tapply(s_face_amt, CRE, sum))
   
   # check for missing
-  uniq_pseg = names(all_accr_face_amt_by_psegment)
+  uniq_pseg = names(all_acc_face_amt_by_psegment)
   for (uniq_pseg_ele in uniq_pseg) {
     if (!(uniq_pseg_ele %in% names(closed_acc_face_amt_by_psegment))) {
       closed_acc_face_amt_by_psegment[uniq_pseg_ele] = 0
@@ -179,28 +203,40 @@ for (i in 1:nrow(period_pair)) {
     }
   }
   
+  for (cre_seg in c('CRE Investor Owned', 'CRE Owner Occupied', 'CRE Construction', 'Non-CRE')) {
+    if (! cre_seg %in% names(closed_acc_face_amt_by_cre)) {
+      closed_acc_face_amt_by_cre[cre_seg] = 0
+    }
+  }
+  
   # Reorder
   closed_acc_face_amt_by_psegment = closed_acc_face_amt_by_psegment[order(names(closed_acc_face_amt_by_psegment))]
   closed_acc_face_amt_by_domestic = closed_acc_face_amt_by_domestic[order(names(closed_acc_face_amt_by_domestic))]
+  closed_acc_face_amt_by_cre = closed_acc_face_amt_by_cre[order(names(closed_acc_face_amt_by_cre))]
     
   # SMM to CPR (This is based on commitment (I'm using face_amt))
-  n_per_closure_by_csegment[i, 1:2] = (1 - (1 - closed_acc_face_amt_by_csegment / all_accr_face_amt_by_csegment) ^ 12) * 100
+  n_per_closure_by_csegment[i, 1:2] = (1 - (1 - closed_acc_face_amt_by_csegment / all_acc_face_amt_by_csegment) ^ 12) * 100
   n_per_closure_by_psegment[i, 1] = n_per_closure_by_csegment[i, 1]
-  n_per_closure_by_psegment[i, 2:6] = (1 - (1 - closed_acc_face_amt_by_psegment / all_accr_face_amt_by_psegment) ^ 12) * 100
+  n_per_closure_by_psegment[i, 2:7] = (1 - (1 - closed_acc_face_amt_by_psegment / all_acc_face_amt_by_psegment) ^ 12) * 100
   
   n_per_closure_domestic[i, 1] = n_per_closure_by_psegment[i, 3]  # Domestic (prod2)
   n_per_closure_domestic[i, 2:6] = (1 - (1 - closed_acc_face_amt_by_domestic[c(2, 3, 4, 5, 7)] / 
-                                           all_accr_face_amt_by_domestic[c(2, 3, 4, 5, 7)]) ^ 12) * 100
+                                           all_acc_face_amt_by_domestic[c(2, 3, 4, 5, 7)]) ^ 12) * 100
+  
+  n_per_closure_cre[i, 1] = n_per_closure_by_psegment[i, 2]
+  n_per_closure_cre[i, 2:4] = (1 - (1 - closed_acc_face_amt_by_cre[c(1, 2, 3)] / 
+                                      all_acc_face_amt_by_cre[c(1, 2, 3)]) ^ 12) * 100
 
 }
 
 # Make it n x 1 and add segmentation
 n_per_closure_df_by_prod = data.frame(cpr=as.vector(t(n_per_closure_by_psegment)))
 
-segmentation_name_by_prod = c('nrtl','cre', 'domestic', 'tax exempt', 'floor plan', 'international')
+segmentation_name_by_prod = c('nrtl','cre', 'domestic', 'tax exempt', 'floor plan', 'international', 'rtl')
 
 n_per_closure_df_by_prod['period'] = rep(unlist(period_str), each=length(segmentation_name_by_prod))
 n_per_closure_df_by_prod['segmentation'] = rep(segmentation_name_by_prod, length(period_str))
+n_per_closure_df_by_prod$segmentation = factor(n_per_closure_df_by_prod$segmentation, levels = segmentation_name_by_prod)
 
 ggplot(n_per_closure_df_by_prod, aes(x=period, y=cpr, group=segmentation)) + 
   geom_bar(aes(fill=segmentation), stat='identity', position='dodge') + 
@@ -222,8 +258,17 @@ ggplot(n_per_domestic_closure_df, aes(x=period, y=cpr, group=segmentation)) +
   scale_x_discrete(limits=unlist(period_str)) +
   theme(legend.position="bottom")
 
+# Make it n x 1 for cre and add segmentation
+n_per_cre_closure_df = data.frame(cpr=as.vector(t(n_per_closure_cre)))
 
-# Write to excel
-if (is_export_xlsx == T) {
-  write.xlsx(n_per_closure_df_by_prod, "closure_by_prod_type.xlsx", sheetName="raw_data_by_prod")
-}  
+segmentation_name_by_prod = c('CRE', 'CRE Construction', 'CRE Investor Owned', 'CRE Owner Occupied')
+
+n_per_cre_closure_df['period'] = rep(unlist(period_str), each=length(segmentation_name_by_prod))
+n_per_cre_closure_df['segmentation'] = rep(segmentation_name_by_prod, length(period_str))
+
+ggplot(n_per_cre_closure_df, aes(x=period, y=cpr, group=segmentation)) + 
+  geom_bar(aes(fill=segmentation), stat='identity', position='dodge') + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  scale_x_discrete(limits=unlist(period_str)) +
+  theme(legend.position="bottom")
+

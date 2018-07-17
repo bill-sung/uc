@@ -31,7 +31,7 @@ for (i in 1:length(period)) {
   sas_data = temp_data[, sas_fields]
   
   # Filter for CIB and ASG
-  asg_filter = sas_data$QRM_Forecast_SubLOB %in% c('Asset Sec Group','Direct Finance')
+  asg_filter = sas_data$QRM_Forecast_SubLOB %in% c('Asset Sec Group', 'Direct Finance')
   abl_filter = grepl('ABL', sas_data$planning_account, ignore.case = T)
   floor_filter = grepl('Floor', sas_data$planning_account, ignore.case = T)
   cib_filter = grepl('CIB', sas_data$QRM_LOB, ignore.case = T) & !abl_filter & !floor_filter
@@ -52,14 +52,25 @@ for (i in 1:length(period)) {
 
 # Plot ASG commitment
 asg_face_amt_in_b = round(asg_face_amt / 1e9, 2)
-barplot(asg_face_amt_in_b, main='ASG', names.arg=period_str, ylab='Commitment [$B]',
-        ylim=c(0, 1.1 * max(asg_face_amt_in_b)), las=2)
-grid()
+
+asg_face_amt_df = data.frame(face_amt=as.vector(t(asg_face_amt_in_b)))
+asg_face_amt_df['period'] = unlist(period_str)
+
+ggplot(asg_face_amt_df, aes(x=period, y=face_amt)) + 
+  geom_bar(stat='identity', position='dodge') + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  scale_x_discrete(limits=unlist(period_str)) +
+  theme(legend.position="bottom")
 
 # Plot ASG utilization
-par(mar=c(5.1, 4.1, 4.1, 8.1), xpd=TRUE)
-barplot(t(data.frame(asg=asg_utilization, cib_wo_asg=cib_utilization)), main='Utilization Comparison', 
-        names.arg=period_str, ylab='Utilizastion [%]', ylim=c(0, 1.1 * max(asg_utilization)), las=2, beside=T,
-        legend= c('ASG', 'CIB w/0 ASG'), args.legend=list(x='topright', inset=c(-0.3, 0)))
-grid()
+utilization_df = data.frame(utilization=as.vector(t(asg_utilization)), seg=rep('asg', length(period_str)))
+utilization_df = rbind(utilization_df, data.frame(utilization=as.vector(t(cib_utilization)), seg=rep('cib wo asg', length(period_str))))
 
+cib_wo_asg=as.vector(t(cib_utilization))
+utilization_df['period'] = rep(unlist(period_str), 2)
+
+ggplot(utilization_df, aes(x=period, y=utilization, group=seg)) + 
+  geom_bar(aes(fill=seg), stat='identity', position='dodge') + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+  scale_x_discrete(limits=unlist(period_str)) +
+  theme(legend.position="bottom")

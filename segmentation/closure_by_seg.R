@@ -13,13 +13,12 @@ for (req_pack_ele in req_packages) {
 }
 is_export_xlsx = F
 
-
 # Period 
 # Serioulsly ?
 # https://stackoverflow.com/questions/29956396/looping-through-date-in-r-loses-format
 # Period from 2016-01-31 to 2018-02-31
 # period = as.list(seq(as.Date("2016-02-01"),length=26,by="month")-1)
-period = as.list(c(as.Date('2018-1-31'), as.Date('2018-2-28'), as.Date('2018-3-31')))
+period = as.list(c(as.Date('2018-5-31'), as.Date('2018-6-30')))
 period_pair = cbind(period[-length(period)], period[-1])
 period_str = c()
 
@@ -83,7 +82,11 @@ for (i in 1:nrow(period_pair)) {
   sas_data[cml_filter, seg_fl] = list('Seg 3', 'Seg Ntr1')
   sas_data[pwm_filter, seg_fl] = list('Seg 4', 'Seg Ntr1')
   sas_data[abl_filter, seg_fl] = list('Seg 5', 'Seg Ntr1')
-  sas_data[cnb_filter, seg_fl] = list('Seg 6', 'Seg Rt1')
+  # This is not exactly what we want for updated segmentation
+  # Segmentat 6 should have only BBK Metro without BBK Regional
+  # This is just simple approximation 
+  # For accurate filtering, check utilization_by_seg.R or utilization_by_prod_type
+  sas_data[cnb_filter, seg_fl] = list('Seg 6', 'Seg Rt1')  
   sas_data[cre_filter, seg_fl] = list('Seg 7', 'Seg Ntr1')
   
   # Start period filter
@@ -126,19 +129,15 @@ for (i in 1:nrow(period_pair)) {
   
   # closed_acc_by_CSegment
   closed_acc_face_amt_by_csegment = with(closed_acc_data, tapply(s_face_amt, CSegment, sum))
-  all_accr_face_amt_by_csegment = with(s_per_data, tapply(s_face_amt, CSegment, sum))
+  all_acc_face_amt_by_csegment = with(s_per_data, tapply(s_face_amt, CSegment, sum))
   
   # closed_acc_by_USegment
   closed_acc_face_amt_by_usegment = with(closed_acc_data, tapply(s_face_amt, USegment, sum))
-  all_accr_face_amt_by_usegment = with(s_per_data, tapply(s_face_amt, USegment, sum))
+  all_acc_face_amt_by_usegment = with(s_per_data, tapply(s_face_amt, USegment, sum))
   # check for missing
-  uniq_useg = names(all_accr_face_amt_by_usegment)
+  uniq_useg = names(all_acc_face_amt_by_usegment)
   
   for (uniq_useg_ele in uniq_useg) {
-    if (!(uniq_useg_ele %in% names(closed_acc_face_amt_by_csegment))) {
-      closed_acc_face_amt_by_csegment[uniq_useg_ele] = 0
-    }
-    
     if (!(uniq_useg_ele %in% names(closed_acc_face_amt_by_usegment))) {
       closed_acc_face_amt_by_usegment[uniq_useg_ele] = 0
     }
@@ -146,10 +145,10 @@ for (i in 1:nrow(period_pair)) {
   closed_acc_face_amt_by_usegment = closed_acc_face_amt_by_usegment[order(names(closed_acc_face_amt_by_usegment))]
   
   # SMM to CPR (This is based on commitment (I'm using face_amt))
-  n_per_closure_by_csegment = (1 - (1 - closed_acc_face_amt_by_csegment / all_accr_face_amt_by_csegment) ^ 12) * 100
+  n_per_closure_by_csegment = (1 - (1 - closed_acc_face_amt_by_csegment / all_acc_face_amt_by_csegment) ^ 12) * 100
   n_per_closure[i, 1] = n_per_closure_by_csegment[1]
   
-  n_per_closure_by_usegment = (1 - (1 - closed_acc_face_amt_by_usegment / all_accr_face_amt_by_usegment) ^ 12) * 100
+  n_per_closure_by_usegment = (1 - (1 - closed_acc_face_amt_by_usegment / all_acc_face_amt_by_usegment) ^ 12) * 100
   n_per_closure[i, 2:8] = n_per_closure_by_usegment
 }
 

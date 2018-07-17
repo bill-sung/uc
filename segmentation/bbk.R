@@ -20,7 +20,7 @@ is_export_xlsx = T
 # Period from 2016-01-31 to 2018-02-31
 # period = as.list(c(as.Date("2016-03-31"),as.Date("2016-05-31")))
 # period = as.list(c(as.Date('2017-12-31'), as.Date('2018-1-31'), as.Date('2018-2-28')))
-period = as.list(seq(as.Date("2016-02-01"),length=26,by="month")-1)
+period = as.list(seq(as.Date("2017-02-01"),length=26,by="month")-1)
 # period = as.list(c(as.Date("2017-09-30")))
 period_str = c()
 

@@ -20,13 +20,14 @@ is_export_xlsx = F
 # https://stackoverflow.com/questions/29956396/looping-through-date-in-r-loses-format
 # Period from 2016-01-31 to 2018-02-31
 # period = as.list(seq(as.Date("2016-02-01"),length=26,by="month")-1)
-period = as.list(c(as.Date('2018-2-28'), as.Date('2018-3-31')))
+period = as.list(c(as.Date('2018-5-31')))
 # period = as.list(seq(as.Date("2016-02-01"),length=10,by="month")-1)
 period_str = c()
 
 # Output (next month closure rate either by csegment or usegment)
 # utilization_mat has seg1, 2, 3, 4, 5, 6, 7 for each period
 utilization_mat = matrix(nrow = length(period), ncol=7)  
+proposed_utilization_mat = matrix(nrow = length(period), ncol=7)  # For the proposed one
 
 # sas_data fileds of interests
 sas_fields = c('PERD_END_DT', 'Proc_Tp_RevNon_Ind', 'high_account_ID', 'QRM_Forecast_SubLOB', 
@@ -39,9 +40,8 @@ for (i in 1:length(period)) {
   print(sprintf('Running sas data for %s', period_str_ele))
       
   temp_data = read_sas(paste0("data/comlmodeling_", period_str_ele, ".sas7bdat"))
- 
   sas_data = temp_data[, sas_fields]
-
+  
   # Initial filters for data relevant to utilization / closure
   period_filter = sas_data$PERD_END_DT >= period[[i]]
   revolver_filter = sas_data$Proc_Tp_RevNon_Ind == 'Revolver'
@@ -50,9 +50,29 @@ for (i in 1:length(period)) {
   amt_filter = sas_data$face_amt >= 0
   sas_data = sas_data[period_filter & revolver_filter & sub_filter & qrm_filter & amt_filter,]
   
-  # Assign USegment, CSegment
+  # Set up filter for bbk-metro (only bbk-metro goes to seg 6 in proposed)
+  names(temp_data) = tolower(names(temp_data))
+  bbk_metro_filter_str =''
+  if ('sub_lob_2_nm' %in% names(temp_data)) {  # new data
+    sas_data['sub_lob_nm'] = temp_data[period_filter & revolver_filter & sub_filter & qrm_filter & amt_filter, 'sub_lob_2_nm']
+    bbk_metro_filter_str = 'metro bbk'
+    cat('\t', " -> sub_lob_nm field is patched by sub_lob_2_nm", '\n')
+  } else {
+    if ('Business Banking' %in% unique(temp_data$qrm_forecast_sublob)) {
+      sas_data['sub_lob_nm'] = temp_data[period_filter & revolver_filter & sub_filter & qrm_filter & amt_filter, 'sub_lob_nm']
+      bbk_metro_filter_str = 'metro business banking'
+      cat('\t', "-> sub_lob_nm field is patched by SUB_LOB_NM", '\n')
+    } else {
+      # before Apr 2016 data
+      # Old data has QRM_Forecast_SubLoB for BBK Metro and BBK Regional
+      sas_data['sub_lob_nm'] = temp_data[period_filter & revolver_filter & sub_filter & qrm_filter & amt_filter, 'qrm_forecast_sublob']
+      bbk_metro_filter_str = 'bbk metro'
+      cat('\t', "-> sub_lob_nm field is patched by QRM_Forecast_SubLOB", '\n')
+    }
+  }
+  
+  # Assign USegment
   sas_data$USegment = NA
-  sas_data$CSegment = NA
   
   # Segment filter
   abl_filter = grepl('ABL', sas_data$planning_account, ignore.case = T)
@@ -66,27 +86,46 @@ for (i in 1:length(period)) {
     !abl_filter & !floor_filter
   cre_filter = grepl('CRE', sas_data$QRM_LOB, ignore.case = T) & !abl_filter & !floor_filter
   
-  seg_fl = c("USegment", "CSegment")
-  sas_data[floor_filter, seg_fl] = list('Seg 1', 'Seg Ntr1')
-  sas_data[cib_filter, seg_fl] = list('Seg 2', 'Seg Ntr1')
-  sas_data[cml_filter, seg_fl] = list('Seg 3', 'Seg Ntr1')
-  sas_data[pwm_filter, seg_fl] = list('Seg 4', 'Seg Ntr1')
-  sas_data[abl_filter, seg_fl] = list('Seg 5', 'Seg Ntr1')
-  sas_data[cnb_filter, seg_fl] = list('Seg 6', 'Seg Rt1')
-  sas_data[cre_filter, seg_fl] = list('Seg 7', 'Seg Ntr1')
+  # BBK-Metro filter (Updated filter setting for BBK-Metro)
+  # BBK-Metro has been moved from CML (seg 3) to Rtl (seg 6)
+  bbk_metro_filter = grepl(bbk_metro_filter_str, sas_data$sub_lob_nm, ignore.case = T)
+  proposed_cml_filter = (grepl('CML', sas_data$QRM_LOB, ignore.case = T) & !abl_filter & !floor_filter) & !bbk_metro_filter
+  proposed_cnb_filter = (grepl('CNB', sas_data$QRM_LOB, ignore.case = T) & !abl_filter & !floor_filter) | bbk_metro_filter
+  
+  sas_data[floor_filter, "USegment"] = 'Seg 1'
+  sas_data[cib_filter, "USegment"] = 'Seg 2'
+  sas_data[cml_filter, "USegment"] = 'Seg 3'
+  sas_data[pwm_filter, "USegment"] = 'Seg 4'
+  sas_data[abl_filter, "USegment"] = 'Seg 5'
+  sas_data[cnb_filter, "USegment"] = 'Seg 6'
+  sas_data[cre_filter, "USegment"] = 'Seg 7'
+  
+  sas_data[floor_filter, "Proposed_USeg"] = 'Seg 1'
+  sas_data[cib_filter, "Proposed_USeg"] = 'Seg 2'
+  sas_data[proposed_cml_filter, "Proposed_USeg"] = 'Seg 3'
+  sas_data[pwm_filter, "Proposed_USeg"] = 'Seg 4'
+  sas_data[abl_filter, "Proposed_USeg"] = 'Seg 5'
+  sas_data[proposed_cnb_filter, "Proposed_USeg"] = 'Seg 6'
+  sas_data[cre_filter, "Proposed_USeg"] = 'Seg 7'
   
   # Start period filter
   s_per_filter = with(sas_data, PERD_END_DT == period[[i]] & NonAccrualFlag == 'N' & face_amt > 0)
   s_per_data = sas_data[s_per_filter, ]
   s_per_data = aggregate(s_per_data[, c('face_amt', 'Curr_Bal')], 
                          by=list(new_id = paste0(s_per_data$high_account_ID, s_per_data$USegment), 
-                                 USegment = s_per_data$USegment, 
-                                 CSegment = s_per_data$CSegment), 
+                                 USegment = s_per_data$USegment,
+                                 Proposed_USeg = s_per_data$Proposed_USeg), 
                          FUN=sum)
-  colnames(s_per_data) <- c("new_id", "USegment", "CSegment", "s_face_amt", "s_curr_bal")
+  
+  colnames(s_per_data) <- c("new_id", "USegment", "Proposed_USeg", "s_face_amt", "s_curr_bal")
+  
   s_per_face_amt = with(s_per_data, tapply(s_face_amt, USegment, sum))
   s_per_bal_amt = with(s_per_data, tapply(s_curr_bal, USegment, sum))
   utilization_mat[i, 1:7] = s_per_bal_amt / s_per_face_amt * 100
+  
+  proposed_s_per_face_amt = with(s_per_data, tapply(s_face_amt, Proposed_USeg, sum))
+  proposed_s_per_bal_amt = with(s_per_data, tapply(s_curr_bal, Proposed_USeg, sum))
+  proposed_utilization_mat[i, 1:7] = proposed_s_per_bal_amt / proposed_s_per_face_amt * 100
 }
 
 # Make it n x 1 and add segmentation
